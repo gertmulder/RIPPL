@@ -1,0 +1,16 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: Radar Interferometric Parallel Processing Lab
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Gert
+    family-names: Mulder
+    email: gert.mulder@gmail.com
+    affiliation: TU Delft
+    orcid: 'https://orcid.org/0000-0002-9060-4080'
+license: LGPL-3.0
