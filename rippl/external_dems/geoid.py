@@ -4,6 +4,8 @@ import os
 import zipfile
 import shutil
 import logging
+import requests
+
 
 class GeoidInterp():
 
@@ -12,9 +14,14 @@ class GeoidInterp():
         # Download egm96 file
         if not os.path.exists(egm_96_file + '.zip'):
             url = 'https://earth-info.nga.mil/php/download.php?file=egm-96interpolation'
-            logging.info('downloading from ' + url + ' to ' + egm_96_file + '.zip')
-            command = 'wget ' + url + ' -O ' + '"' + egm_96_file + '.zip'
-            os.system(command)
+            zip_path = egm_96_file + '.zip'
+            logging.info('downloading from ' + url + ' to ' + zip_path)
+            response = requests.get(url, stream=True, timeout=120)
+            response.raise_for_status()
+            with open(zip_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
 
         # Perform unzip operation
         with zipfile.ZipFile(egm_96_file + '.zip', 'r') as egm_96_zip:
