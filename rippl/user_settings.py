@@ -29,7 +29,7 @@ class UserSettings(object):
             self.settings['accounts'] = {}
             self.settings['accounts']['Copernicus'] = {'username': None, 'password': None, 'api_key': None}
             self.settings['accounts']['EarthData'] = {'username': None, 'password': None}
-            self.settings['accounts']['USGS'] = {'username': None, 'token': None}
+            self.settings['accounts']['OpenTopography'] = {'api_key': None}
             self.settings['accounts']['DLR'] = {'username': None, 'password': None}
             self.settings['accounts']['CDS'] = {'api_key': None, 'enabled': False}
             self.settings['accounts']['Satellietdataportaal'] = {'username': None, 'password': None}
@@ -110,44 +110,47 @@ class UserSettings(object):
         self.settings['accounts']['EarthData']['password'] = password
         return True
 
-    def add_usgs_settings(self, username, token):
+    def add_opentopography_settings(self, api_key):
         """
-        Store USGS/EROS credentials for the M2M API used to download SRTM DEMs.
+        Store an OpenTopography API key used to download SRTM DEMs.
 
-        Create an account at https://ers.cr.usgs.gov/, request MACHINE access under
-        https://ers.cr.usgs.gov/profile/access, then create an application token.
-        Login uses the login-token endpoint at https://m2m.cr.usgs.gov/
+        Request a free key via MyOpenTopo on https://portal.opentopography.org/
+        API docs: https://portal.opentopography.org/apidocs/#/Public/getGlobalDem
         """
 
-        if 'USGS' not in self.settings['accounts']:
-            self.settings['accounts']['USGS'] = {'username': None, 'token': None}
+        if 'OpenTopography' not in self.settings['accounts']:
+            self.settings['accounts']['OpenTopography'] = {'api_key': None}
 
-        url = 'https://m2m.cr.usgs.gov/api/api/json/stable/login-token'
+        # Tiny request to validate the key (Hawaii coastline tile corner).
+        params = {
+            'demtype': 'SRTMGL3',
+            'south': 19.0,
+            'north': 19.01,
+            'west': -156.0,
+            'east': -155.99,
+            'outputFormat': 'GTiff',
+            'API_Key': api_key,
+        }
         try:
-            r = requests.post(url, json={'username': username, 'token': token}, timeout=60)
-            r.raise_for_status()
-            payload = r.json()
-            if payload.get('errorCode') or not payload.get('data'):
+            r = requests.get(
+                'https://portal.opentopography.org/API/globaldem',
+                params=params,
+                timeout=60,
+            )
+            if r.status_code == 401:
+                logging.warning('OpenTopography API key is not valid (unauthorized).')
+                return False
+            if r.status_code not in (200, 204):
                 logging.warning(
-                    'USGS M2M login failed: {} - {}'.format(
-                        payload.get('errorCode'), payload.get('errorMessage'))
+                    'OpenTopography API key validation failed with HTTP {}.'.format(r.status_code)
                 )
                 return False
-            # End the session so we do not leave an open M2M login behind.
-            api_key = payload['data']
-            requests.post(
-                'https://m2m.cr.usgs.gov/api/api/json/stable/logout',
-                headers={'X-Auth-Token': api_key},
-                json={},
-                timeout=30,
-            )
-            logging.info('USGS M2M application token valid!')
+            logging.info('OpenTopography API key valid!')
         except Exception as e:
-            logging.warning('USGS M2M account could not be validated. ' + str(e))
+            logging.warning('OpenTopography API key could not be validated. ' + str(e))
             return False
 
-        self.settings['accounts']['USGS']['username'] = username
-        self.settings['accounts']['USGS']['token'] = token
+        self.settings['accounts']['OpenTopography']['api_key'] = api_key
         return True
 
     def add_DLR_settings(self, username, password):
@@ -236,9 +239,9 @@ class UserSettings(object):
 
         """
 
-        dem_names = ['SRTM', 'TanDEM-X']
+        dem_names = ['SRTM', 'TanDEM-X', 'OpenTopography']
         if not dem_path_names:
-            dem_path_names = ['srtm', 'tdx']
+            dem_path_names = ['srtm', 'tdx', 'opentopography']
 
         sar_names = ['Sentinel-1', 'TerraSAR-X', 'RADARSAT-2']
         if not sar_path_names:
@@ -390,9 +393,11 @@ class UserSettings(object):
         if 'Satellietdataportaal' not in self.settings.get('accounts', {}):
             self.settings.setdefault('accounts', {})['Satellietdataportaal'] = {
                 'username': None, 'password': None}
-        if 'USGS' not in self.settings.get('accounts', {}):
-            self.settings.setdefault('accounts', {})['USGS'] = {
-                'username': None, 'token': None}
+        if 'OpenTopography' not in self.settings.get('accounts', {}):
+            self.settings.setdefault('accounts', {})['OpenTopography'] = {
+                'api_key': None}
+        if 'OpenTopography' not in self.settings.get('path_names', {}).get('DEM', {}):
+            self.settings.setdefault('path_names', {}).setdefault('DEM', {})['OpenTopography'] = 'opentopography'
         if 'RADARSAT-2' not in self.settings.get('path_names', {}).get('SAR', {}):
             self.settings.setdefault('path_names', {}).setdefault('SAR', {})['RADARSAT-2'] = 'radarsat2'
 

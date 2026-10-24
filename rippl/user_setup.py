@@ -102,30 +102,28 @@ while success == False:
 logging.info(
 """
 
-Create a USGS/EROS account to download SRTM DEM data (1 and 3 arc-second) via the Machine-to-Machine API:
-https://m2m.cr.usgs.gov/
+Create an OpenTopography account / API key to download SRTM DEM data (1 and 3 arc-second):
+https://portal.opentopography.org/
 
-1) Register at https://ers.cr.usgs.gov/
-2) Request MACHINE access at https://ers.cr.usgs.gov/profile/access
-3) Create an application token in your ERS profile (password login is deprecated)
+1) Register / log in on the OpenTopography portal
+2) Open MyOpenTopo and request an API key
+3) API docs: https://portal.opentopography.org/apidocs/#/Public/getGlobalDem
 
 """
 )
 
 success = False
 while success == False:
-    logging.info('Enter your USGS/EROS username')
-    usgs_username = input()
-    logging.info('Enter your USGS M2M application token')
-    usgs_token = input()
+    logging.info('Enter your OpenTopography API key')
+    opentopo_api_key = input()
 
-    success = settings.add_usgs_settings(usgs_username, usgs_token)
+    success = settings.add_opentopography_settings(opentopo_api_key)
 
     if success:
-        logging.info('USGS M2M account added!')
+        logging.info('OpenTopography API key added!')
 
-    if usgs_username == '' and usgs_token == '':
-        logging.info('Both inputs are empty, we will skip this step. You will not be able to download SRTM DEMs')
+    if opentopo_api_key == '':
+        logging.info('Input is empty, we will skip this step. You will not be able to download SRTM DEMs')
         success = True
 
 logging.info(

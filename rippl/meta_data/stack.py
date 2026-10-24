@@ -24,7 +24,8 @@ from multiprocessing import get_context
 from rippl.run_parallel import run_parallel
 from rippl.meta_data.slc import SLC
 from rippl.meta_data.interferogram import Interferogram
-from rippl.external_dems.srtm.srtm_download import SrtmDownload
+from rippl.external_dems.opentopography.opentopography_download import (
+    OpenTopographyDownload, is_opentopo_dem, OPENTOPO_DEM_TYPES)
 from rippl.external_dems.tandem_x.tandem_x_download import TandemXDownload
 from rippl.meta_data.interferogram_network import InterferogramNetwork
 from rippl.meta_data.image_processing_concatenate import ImageConcatData, ImageProcessingData
@@ -214,9 +215,12 @@ class Stack(object):
         :return:
         """
 
-        if dem_type not in ['SRTM1', 'SRTM3', 'TDM30', 'TDM90']:
-            raise TypeError('dem_type should be SRTM1, SRTM3, TDM30 or TDM90'
-                            'If you using a different external DEM, use the create_ml_coordinates function instead.')
+        if dem_type not in list(OPENTOPO_DEM_TYPES.keys()) + ['TDM30', 'TDM90']:
+            raise TypeError(
+                'dem_type should be an OpenTopography product ({}) or TDM30/TDM90. '
+                'If you are using a different external DEM, use the create_ml_coordinates function instead.'.format(
+                    ', '.join(sorted(OPENTOPO_DEM_TYPES.keys())))
+            )
 
         self.coordinates[dem_type] = {'meta': dict()}
         self.coordinates[dem_type]['meta']['buffer'] = buffer
@@ -561,39 +565,40 @@ class Stack(object):
         return image_types_out, image_dates_out, slice_names_out, processes_out, process_ids_out, coordinates_out, \
                in_coordinates_out, file_types_out, images_out
 
-    def download_SRTM_dem(self, srtm_folder=None, username=None, token=None, password=None,
-                          srtm_type='SRTM3', parallel=True, n_processes=4):
+    def download_opentopography_dem(self, dem_folder=None, api_key=None, dem_type='SRTM3',
+                                    parallel=True, n_processes=4):
         """
-        Downloads the needed SRTM data for this data_stack using the USGS M2M API
-        (https://m2m.cr.usgs.gov/) for the stack area of interest.
+        Download DEM data for this stack via the OpenTopography global DEM API.
 
-        Create an ERS account at https://ers.cr.usgs.gov/, request MACHINE access, and
-        generate an application token. Credentials are stored under accounts['USGS'].
+        Request an API key via MyOpenTopo on https://portal.opentopography.org/
+        API docs: https://portal.opentopography.org/apidocs/#/Public/getGlobalDem
 
-        Product info:
-        https://www.usgs.gov/centers/eros/science/usgs-eros-archive-digital-elevation-shuttle-radar-topography-mission-srtm
-
-        :param srtm_folder:
-        :param username: USGS/EROS username
-        :param token: USGS M2M application token
-        :param password: legacy alias for token
-        :param srtm_type:
-        :param parallel:
-        :param n_processes:
-        :return:
+        Supported dem_type values include SRTM1/SRTM3, COP30/COP90, AW3D30,
+        NASADEM, EU_DTM, SRTM15Plus, GEDI_L3, GEBCOIceTopo, GEBCOSubIceTopo, etc.
         """
 
-        if not srtm_folder:
-            srtm_folder = os.path.join(self.settings.settings['paths']['DEM_database'], self.settings.settings['path_names']['DEM']['SRTM'])
-        usgs = self.settings.settings.get('accounts', {}).get('USGS', {})
-        if not username:
-            username = usgs.get('username')
-        if not token:
-            token = usgs.get('token') or password
+        if not is_opentopo_dem(dem_type):
+            raise ValueError('dem_type {} is not an OpenTopography product.'.format(dem_type))
 
-        download = SrtmDownload(srtm_folder, username=username, token=token, srtm_type=srtm_type,
-                                n_processes=n_processes)
-        download(coordinates=self.coordinates[srtm_type]['full'], parallel=parallel)
+        ot = self.settings.settings.get('accounts', {}).get('OpenTopography', {})
+        if not api_key:
+            api_key = ot.get('api_key')
+
+        download = OpenTopographyDownload(
+            dem_folder=dem_folder, api_key=api_key, dem_type=dem_type, n_processes=n_processes)
+        download(coordinates=self.coordinates[dem_type]['full'], parallel=parallel)
+
+    def download_SRTM_dem(self, srtm_folder=None, api_key=None, username=None, token=None,
+                          password=None, srtm_type='SRTM3', parallel=True, n_processes=4):
+        """
+        Backward-compatible wrapper around download_opentopography_dem for SRTM1/SRTM3.
+        """
+        ot = self.settings.settings.get('accounts', {}).get('OpenTopography', {})
+        if not api_key:
+            api_key = ot.get('api_key') or token or password
+        self.download_opentopography_dem(
+            dem_folder=srtm_folder, api_key=api_key, dem_type=srtm_type,
+            parallel=parallel, n_processes=n_processes)
 
     def download_Tandem_X_dem(self, tandem_x_folder=None, username=None, password=None,
                               parallel=True, n_processes=1, tandem_x_type='TDM30'):
