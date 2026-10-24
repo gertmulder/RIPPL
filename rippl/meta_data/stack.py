@@ -561,33 +561,39 @@ class Stack(object):
         return image_types_out, image_dates_out, slice_names_out, processes_out, process_ids_out, coordinates_out, \
                in_coordinates_out, file_types_out, images_out
 
-    def download_SRTM_dem(self, srtm_folder=None, username=None, password=None, srtm_type='SRTM3', parallel=True, n_processes=4):
+    def download_SRTM_dem(self, srtm_folder=None, username=None, token=None, password=None,
+                          srtm_type='SRTM3', parallel=True, n_processes=4):
         """
-        Downloads the needed srtm data for this data_stack. srtm_folder is the folder the downloaded srtm tiles are
-        stored.
-        Username and password can be obtained at https://lpdaac.usgs.gov
-        Documentation: https://lpdaac.usgs.gov/sites/default/files/public/measures/docs/NASA_SRTM_V3.pdf
+        Downloads the needed SRTM data for this data_stack using the USGS M2M API
+        (https://m2m.cr.usgs.gov/) for the stack area of interest.
 
-        Description srtm data: https://lpdaac.usgs.gov/dataset_discovery/measures/measures_products_table/SRTMGL1_v003
-        Description srtm q data: https://lpdaac.usgs.gov/node/505
+        Create an ERS account at https://ers.cr.usgs.gov/, request MACHINE access, and
+        generate an application token. Credentials are stored under accounts['USGS'].
+
+        Product info:
+        https://www.usgs.gov/centers/eros/science/usgs-eros-archive-digital-elevation-shuttle-radar-topography-mission-srtm
 
         :param srtm_folder:
-        :param username:
-        :param password:
+        :param username: USGS/EROS username
+        :param token: USGS M2M application token
+        :param password: legacy alias for token
         :param srtm_type:
         :param parallel:
+        :param n_processes:
         :return:
         """
 
         if not srtm_folder:
             srtm_folder = os.path.join(self.settings.settings['paths']['DEM_database'], self.settings.settings['path_names']['DEM']['SRTM'])
+        usgs = self.settings.settings.get('accounts', {}).get('USGS', {})
         if not username:
-            username = self.settings.settings['accounts']['EarthData']['username']
-        if not password:
-            password = self.settings.settings['accounts']['EarthData']['password']
+            username = usgs.get('username')
+        if not token:
+            token = usgs.get('token') or password
 
-        download = SrtmDownload(srtm_folder, username, password, srtm_type, n_processes=n_processes)
-        download(coordinates=self.coordinates[srtm_type]['full'])
+        download = SrtmDownload(srtm_folder, username=username, token=token, srtm_type=srtm_type,
+                                n_processes=n_processes)
+        download(coordinates=self.coordinates[srtm_type]['full'], parallel=parallel)
 
     def download_Tandem_X_dem(self, tandem_x_folder=None, username=None, password=None,
                               parallel=True, n_processes=1, tandem_x_type='TDM30'):
@@ -606,9 +612,9 @@ class Stack(object):
         if not tandem_x_folder:
             tandem_x_folder = os.path.join(self.settings.settings['paths']['DEM_database'], self.settings.settings['path_names']['DEM']['TanDEM-X'])
         if not username:
-            username = self.settings.settings['accounts']['DLR'][tandem_x_type]['username']
+            username = self.settings.settings['accounts']['DLR']['username']
         if not password:
-            password = self.settings.settings['accounts']['DLR'][tandem_x_type]['password']
+            password = self.settings.settings['accounts']['DLR']['password']
 
         coordinates = self.coordinates[tandem_x_type]['full']
         download = TandemXDownload(tandem_x_folder, username, password, tandem_x_type=tandem_x_type,

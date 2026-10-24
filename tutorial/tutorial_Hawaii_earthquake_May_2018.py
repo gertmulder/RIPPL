@@ -114,7 +114,7 @@ dem_buffer = 0          # Buffer around radar image where DEM data is downloaded
 dem_rounding = 0        # Rounding of DEM size in degrees
 min_height = -100       # Expected minimum elevation in area of interest (take geoid into account!)
 max_height = 4300       # Expected maximum elevation in area of interest
-dem_type = 'SRTM1'      # DEM type of data we download (SRTM1, SRTM3 and TanDEM-X are supported)
+dem_type = 'TDM30'      # DEM type of data we download (SRTM1, SRTM3 and TDM30 are supported)
 
 # Define both the coordinate system of the DEM, download the needed tiles and import the DEM
 s1_processing.create_dem_coordinates(dem_type=dem_type, buffer=dem_buffer, rounding=dem_rounding,

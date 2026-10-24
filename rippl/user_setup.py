@@ -68,9 +68,8 @@ while success == False:
 logging.info(
 """
 
-Now create an account for Earthdata which is used to download SRTM DEM data with 1 and 3 arc-second resolution
-This account will also give you access to Sentinel-1 mirror server at Alaska Satellite Facility, which can be used
-as an backup for the Copernicus Sentinel hub.
+Now create an account for Earthdata. This account gives you access to the Sentinel-1 mirror server
+at Alaska Satellite Facility, which can be used as a backup for the Copernicus Sentinel hub.
 
 You can create your account using this link:
 https://urs.earthdata.nasa.gov//users/new
@@ -97,6 +96,35 @@ while success == False:
         logging.info('EarthData account added!')
 
     if earthdata_password == '' and earthdata_username == '':
+        logging.info('Both inputs are empty, we will skip this step. You will not be able to use the ASF mirror.')
+        success = True
+
+logging.info(
+"""
+
+Create a USGS/EROS account to download SRTM DEM data (1 and 3 arc-second) via the Machine-to-Machine API:
+https://m2m.cr.usgs.gov/
+
+1) Register at https://ers.cr.usgs.gov/
+2) Request MACHINE access at https://ers.cr.usgs.gov/profile/access
+3) Create an application token in your ERS profile (password login is deprecated)
+
+"""
+)
+
+success = False
+while success == False:
+    logging.info('Enter your USGS/EROS username')
+    usgs_username = input()
+    logging.info('Enter your USGS M2M application token')
+    usgs_token = input()
+
+    success = settings.add_usgs_settings(usgs_username, usgs_token)
+
+    if success:
+        logging.info('USGS M2M account added!')
+
+    if usgs_username == '' and usgs_token == '':
         logging.info('Both inputs are empty, we will skip this step. You will not be able to download SRTM DEMs')
         success = True
 
@@ -124,23 +152,66 @@ while success == False:
     logging.info('Do you want to use DLR DEM data? (default is no)')
     use_dlr = input()
 
+    print(use_dlr)
+
     if use_dlr.lower() == 'yes' or use_dlr.lower == 'y':
-        for dem_type in ['TDM30', 'TDM90']:
-            logging.info('Username EOC Geoservice (DLR) TanDEM-X DEM account for' + dem_type + ':')
-            DLR_username = input()
-            logging.info('Username EOC Geoservice (DLR) TanDEM-X DEM account for' + dem_type + ':')
-            DLR_password = input()
+        logging.info('Username EOC Geoservice (DLR) TanDEM-X DEM account :')
+        DLR_username = input()
+        logging.info('Username EOC Geoservice (DLR) TanDEM-X DEM account :')
+        DLR_password = input()
 
-            success = settings.add_DLR_settings(DLR_username, DLR_password, dem_type)
+        success = settings.add_DLR_settings(DLR_username, DLR_password)
 
-            if success:
-                logging.info('EOC Geoservice (DLR) TanDEM-X DEM account for ' + dem_type + ' added!')
+        if success:
+            logging.info('EOC Geoservice (DLR) TanDEM-X DEM account for added!')
 
-            if DLR_password == '' and DLR_username == '':
-                logging.info('Both inputs are empty, we will skip this step. You will not be able to download TanDEM-X DEMs')
-                success = True
+        if DLR_password == '' and DLR_username == '':
+            logging.info('Both inputs are empty, we will skip this step. You will not be able to download TanDEM-X DEMs')
+            success = True
     else:
         logging.info('Skipping DLR DEM settings')
+        success = True
+
+logging.info(
+"""
+
+Optionally create an account for the Dutch Satellietdataportaal. This is used to search (and later download)
+RADARSAT-2 data over the Netherlands via the STAC API and FTP.
+
+Register at:
+https://www.satellietdataportaal.nl/registreren
+
+Radar access requires an additional approval request in the portal
+(FILTEREN > 20m Radarsat-2 > Toegang aanvragen).
+
+API documentation:
+https://api.satellietdataportaal.nl/v2/stac/docs
+
+"""
+)
+
+success = False
+while success == False:
+    logging.info('Do you want to use Satellietdataportaal / RADARSAT-2 data? (default is no)')
+    use_sdp = input()
+
+    if use_sdp.lower() in ['yes', 'y']:
+        logging.info('Enter your Satellietdataportaal username')
+        sdp_username = input()
+        logging.info('Enter your Satellietdataportaal password')
+        sdp_password = input()
+
+        success = settings.add_satellietdataportaal_settings(sdp_username, sdp_password)
+
+        if success:
+            logging.info('Satellietdataportaal account added!')
+
+        if sdp_password == '' and sdp_username == '':
+            logging.info('Both inputs are empty, we will skip this step. '
+                         'You will not be able to search RADARSAT-2 data.')
+            success = True
+    else:
+        logging.info('Skipping Satellietdataportaal settings')
         success = True
 
 logging.info(
@@ -234,6 +305,10 @@ if change_names in ['y', 'yes']:
     tsx = input()
     sar_names.append(tsx) if tsx  else sar_names.append('tsx')
 
+    logging.info('Name for RADARSAT-2 data (default > radarsat2)')
+    rs2 = input()
+    sar_names.append(rs2) if rs2 else sar_names.append('radarsat2')
+
     logging.info('Name for TanDEM-X data (default > tdx)')
     tdx = input()
     dem_names.append(tdx) if tdx  else sar_names.append('tdx')
@@ -263,8 +338,6 @@ while success == False:
     radar_database = input()
     logging.info('Define DEM database folder')
     DEM_database = input()
-    logging.info('Define radar data products folder')
-    radar_data_products = input()
     logging.info('Define orbit database folder')
     orbit_database = input()
     logging.info('Define radar data stacks folder')
@@ -277,8 +350,7 @@ while success == False:
                             radar_data_stacks=radar_data_stacks,
                             orbit_database=orbit_database,
                             DEM_database=DEM_database,
-                            NWP_model_database=NWP_model_database,
-                            radar_data_products=radar_data_products)
+                            NWP_model_database=NWP_model_database)
 
     if success:
         logging.info('Folders for processing are set!')
@@ -307,7 +379,7 @@ apt-get install snaphu (add sudo in front if needed)
 On a windows machine you could use the prebuild version that is used in the STEP software from ESA. Follow this link:
 http://step.esa.int/main/third-party-plugins-2/snaphu/
 
-On a macbook you will have to build the program yourself. You can use the post under the following linke as a reference:
+On a macbook you will have to build the program yourself. You can use the post under the following link as a reference:
 https://forum.step.esa.int/t/installing-snaphu-on-macbook/10969
 
 The source code can be found under:

@@ -16,6 +16,7 @@ import geopandas as gpd
 fiona.drvsupport.supported_drivers['LIBKML'] = 'rw'
 import numpy as np
 from shapely.geometry import Polygon
+import pandas as pd
 
 from rippl.user_settings import UserSettings
 
@@ -226,7 +227,7 @@ class SentinelBurstId:
                     if len(combined_tracks) == 0:
                         combined_tracks = copy.deepcopy(track)
                     else:
-                        combined_tracks = combined_tracks._append(track)
+                        combined_tracks = pd.concat([combined_tracks, track])
 
                 # Simplify shape to save space on disk and speed up processing.
                 combined_tracks['track'] = combined_tracks['Name'].apply(lambda x: x[:3])

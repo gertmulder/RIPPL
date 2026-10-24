@@ -27,10 +27,12 @@ class UserSettings(object):
         else:
             # Accounts information
             self.settings['accounts'] = {}
-            self.settings['accounts']['Copernicus'] = {'api_key': None}
+            self.settings['accounts']['Copernicus'] = {'username': None, 'password': None, 'api_key': None}
             self.settings['accounts']['EarthData'] = {'username': None, 'password': None}
+            self.settings['accounts']['USGS'] = {'username': None, 'token': None}
             self.settings['accounts']['DLR'] = {'username': None, 'password': None}
             self.settings['accounts']['CDS'] = {'api_key': None, 'enabled': False}
+            self.settings['accounts']['Satellietdataportaal'] = {'username': None, 'password': None}
 
             # Paths
             self.settings['paths'] = {}
@@ -108,29 +110,70 @@ class UserSettings(object):
         self.settings['accounts']['EarthData']['password'] = password
         return True
 
-    def add_DLR_settings(self, username, password, dem_type='TDM30'):
+    def add_usgs_settings(self, username, token):
+        """
+        Store USGS/EROS credentials for the M2M API used to download SRTM DEMs.
+
+        Create an account at https://ers.cr.usgs.gov/, request MACHINE access under
+        https://ers.cr.usgs.gov/profile/access, then create an application token.
+        Login uses the login-token endpoint at https://m2m.cr.usgs.gov/
+        """
+
+        if 'USGS' not in self.settings['accounts']:
+            self.settings['accounts']['USGS'] = {'username': None, 'token': None}
+
+        url = 'https://m2m.cr.usgs.gov/api/api/json/stable/login-token'
+        try:
+            r = requests.post(url, json={'username': username, 'token': token}, timeout=60)
+            r.raise_for_status()
+            payload = r.json()
+            if payload.get('errorCode') or not payload.get('data'):
+                logging.warning(
+                    'USGS M2M login failed: {} - {}'.format(
+                        payload.get('errorCode'), payload.get('errorMessage'))
+                )
+                return False
+            # End the session so we do not leave an open M2M login behind.
+            api_key = payload['data']
+            requests.post(
+                'https://m2m.cr.usgs.gov/api/api/json/stable/logout',
+                headers={'X-Auth-Token': api_key},
+                json={},
+                timeout=30,
+            )
+            logging.info('USGS M2M application token valid!')
+        except Exception as e:
+            logging.warning('USGS M2M account could not be validated. ' + str(e))
+            return False
+
+        self.settings['accounts']['USGS']['username'] = username
+        self.settings['accounts']['USGS']['token'] = token
+        return True
+
+    def add_DLR_settings(self, username, password):
         """
         Checks whether username and password are registered and throws an error if not
 
         """
 
         # Check DLR passwords
-        if dem_type == 'TDM30':
-            url = 'https://download.geoservice.dlr.de/TDM30_EDEM/files/'
-        elif dem_type == 'TDM90':
-            url = 'https://download.geoservice.dlr.de/TDM90/files/'
-        else:
-            raise TypeError('Only TDM30 and TDM90 are possible DEM types')
+        for dem_type in ['TDM30', 'TDM90']:
+            if dem_type == 'TDM30':
+                url = 'https://download.geoservice.dlr.de/TDM30_EDEM/files/'
+            elif dem_type == 'TDM90':
+                url = 'https://download.geoservice.dlr.de/TDM90/files/'
+            else:
+                raise TypeError('Only TDM30 and TDM90 are possible DEM types')
 
-        dat = requests.get(url, auth=(username, password))
-        if dat.ok:
-            logging.info('DLR password valid!')
-        else:
-            logging.warning('Account to download TanDEM-X DEM data not valid.')
-            return False
+            dat = requests.get(url, auth=(username, password))
+            if dat.ok:
+                logging.info('DLR password valid!')
+            else:
+                logging.warning('Account to download TanDEM-X DEM data not valid.')
+                return False
 
-        self.settings['accounts']['DLR'][dem_type]['username'] = username
-        self.settings['accounts']['DLR'][dem_type]['password'] = password
+        self.settings['accounts']['DLR']['username'] = username
+        self.settings['accounts']['DLR']['password'] = password
         return True
 
     def add_ecmwf_settings(self, api_key):
@@ -152,6 +195,33 @@ class UserSettings(object):
         # Set enabled
         self.settings['accounts']['CDS']['enabled'] = True
 
+    def add_satellietdataportaal_settings(self, username, password):
+        """
+        Checks whether username and password are valid for the Satellietdataportaal STAC API.
+
+        Account can be created at https://www.satellietdataportaal.nl/registreren
+        Radar (RADARSAT-2) access requires an additional approval request in the portal.
+        """
+
+        if 'Satellietdataportaal' not in self.settings['accounts']:
+            self.settings['accounts']['Satellietdataportaal'] = {'username': None, 'password': None}
+
+        url = 'https://api.satellietdataportaal.nl/v2/stac/collections'
+        try:
+            r = requests.get(url, auth=(username, password), timeout=30)
+            if r.status_code == 401:
+                logging.warning('Satellietdataportaal account is not valid (unauthorized).')
+                return False
+            r.raise_for_status()
+            logging.info('Satellietdataportaal password valid!')
+        except Exception as e:
+            logging.warning('Satellietdataportaal account could not be validated. ' + str(e))
+            return False
+
+        self.settings['accounts']['Satellietdataportaal']['username'] = username
+        self.settings['accounts']['Satellietdataportaal']['password'] = password
+        return True
+
     def define_sensor_names(self, dem_path_names='', sar_path_names='', nwp_model_path_names=''):
         """
 
@@ -170,9 +240,9 @@ class UserSettings(object):
         if not dem_path_names:
             dem_path_names = ['srtm', 'tdx']
 
-        sar_names = ['Sentinel-1', 'TerraSAR-X']
+        sar_names = ['Sentinel-1', 'TerraSAR-X', 'RADARSAT-2']
         if not sar_path_names:
-            sar_path_names = ['sentinel1', 'tsx']
+            sar_path_names = ['sentinel1', 'tsx', 'radarsat2']
 
         nwp_model_names = ['Harmonie-Arome', 'ECMWF']
         if not nwp_model_path_names:
@@ -315,6 +385,16 @@ class UserSettings(object):
         # Open json file
         with open(self.settings_path, 'r') as f:
             self.settings = json.load(f)
+
+        # Ensure newly added sensors/accounts exist for older settings files
+        if 'Satellietdataportaal' not in self.settings.get('accounts', {}):
+            self.settings.setdefault('accounts', {})['Satellietdataportaal'] = {
+                'username': None, 'password': None}
+        if 'USGS' not in self.settings.get('accounts', {}):
+            self.settings.setdefault('accounts', {})['USGS'] = {
+                'username': None, 'token': None}
+        if 'RADARSAT-2' not in self.settings.get('path_names', {}).get('SAR', {}):
+            self.settings.setdefault('path_names', {}).setdefault('SAR', {})['RADARSAT-2'] = 'radarsat2'
 
     def save_settings(self):
         """

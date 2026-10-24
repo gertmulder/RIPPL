@@ -171,12 +171,9 @@ class ImportDem(Process):  # Change this name to the one of your processing step
                 dem_folder = os.path.join(settings.settings['paths']['DEM_database'], settings.settings['path_names']['DEM']['TanDEM-X'])
 
         if dem_type.startswith('SRTM'):
-            filelist = SrtmDownload.srtm_listing()
-            tiles = SrtmDownload.select_tiles(filelist, coordinates, dem_folder, dem_type, quality, download=False)[0]
-            if quality:
-                tiles = [tile[:-4] for tile in tiles if tile.endswith('.hgt')]
-            else:
-                tiles = [tile[:-4] for tile in tiles if tile.endswith('.hgt')]
+            tiles = SrtmDownload.select_tiles(
+                coordinates, dem_folder, dem_type, quality=quality, download=False)[0]
+            tiles = [tile[:-4] for tile in tiles if tile.endswith('.hgt')]
         elif dem_type.startswith('TDM'):
             filelist = TandemXDownload.tandem_x_listing()
             tiles = TandemXDownload.select_tiles(filelist, coordinates, dem_folder, tandem_x_type=dem_type,

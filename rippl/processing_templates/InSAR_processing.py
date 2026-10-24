@@ -50,27 +50,34 @@ class InSAR_Processing(SentinelStack, Stack):
         else:
             Stack.__init__(self, data_stack_folder=stack_folder, data_stack_name=stack_name)
 
-    def download_external_dem(self, dem_folder=None, dem_type='SRTM3', EarthData_username=None, EarthData_password=None,
+    def download_external_dem(self, dem_folder=None, dem_type='SRTM3', USGS_username=None, USGS_token=None,
+                              EarthData_username=None, EarthData_password=None,
                               DLR_username=None, DLR_password=None, chunk_orientation='lines', n_processes=4,
                               lon_resolution=None):
         """
 
         :param dem_folder:
         :param dem_type:
+        :param USGS_username: USGS/EROS username for M2M SRTM download
+        :param USGS_token: USGS M2M application token
         :param DLR_username:
         :param DLR_password:
-        :param EarthData_username:
-        :param EarthData_password:
+        :param EarthData_username: deprecated for SRTM (kept for call compatibility)
+        :param EarthData_password: deprecated for SRTM (kept for call compatibility)
         :param lon_resolution:
         :return:
         """
 
         # First create the DEM coordinate system.
         coordinates = self.coordinates[dem_type]['full']
+        srtm_user = USGS_username or EarthData_username
+        srtm_token = USGS_token or EarthData_password
         if dem_type == 'SRTM1':
-            self.download_SRTM_dem(dem_folder, EarthData_username, EarthData_password, srtm_type='SRTM1', n_processes=n_processes)
+            self.download_SRTM_dem(dem_folder, username=srtm_user, token=srtm_token, srtm_type='SRTM1',
+                                   n_processes=n_processes)
         elif dem_type == 'SRTM3':
-            self.download_SRTM_dem(dem_folder, EarthData_username, EarthData_password, srtm_type='SRTM3', n_processes=n_processes)
+            self.download_SRTM_dem(dem_folder, username=srtm_user, token=srtm_token, srtm_type='SRTM3',
+                                   n_processes=n_processes)
         elif dem_type == 'TDM30':
             self.download_Tandem_X_dem(dem_folder, DLR_username, DLR_password, tandem_x_type='TDM30', n_processes=n_processes)
             if not lon_resolution:

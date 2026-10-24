@@ -3,24 +3,15 @@
 from typing import Optional
 
 import requests
-from tqdm.auto import tqdm
 import numpy as np
 import logging
 import os
 import datetime
 import base64
 import shapely
-from shapely.geometry import Polygon
-from shapely.ops import unary_union
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
-import cartopy.mpl.ticker as cticker
-import matplotlib.pyplot as plt
-from multiprocessing import get_context
 
+from rippl.SAR_sensors.sar_image_download import DownloadSar, stream_response_to_file, run_parallel_downloads
 from rippl.SAR_sensors.sentinel.sentinel_burst_id import SentinelBurstId
-from rippl.user_settings import UserSettings
-from rippl.orbit_geometry.read_write_shapes import ReadWriteShapes
 
 """
 # Test 
@@ -78,70 +69,56 @@ self.sentinel_download_ASF()
 
 
 class ASFDownloader():
+    """Download one Sentinel-1 product from the ASF data pool."""
 
     def __init__(self, username, password):
         self.username = username
         self.password = password
 
     def __call__(self, download_data):
-        # Do the download
-
         [product_name, date, track, polarisation, direction, size, file_path, pos] = download_data
 
-        # Download
         url = 'https://datapool.asf.alaska.edu/SLC/SA/' + os.path.basename(file_path)
         edl_host = 'urs.earthdata.nasa.gov'
         edl_client_id = 'BO_n7nTIlMljdvU6kRRB3g'
         asf_auth_host = 'auth.asf.alaska.edu'
-        login_url = f'https://{edl_host}/oauth/authorize?client_id={edl_client_id}&response_type=code&redirect_uri=https://{asf_auth_host}/login'
+        login_url = (f'https://{edl_host}/oauth/authorize?client_id={edl_client_id}'
+                     f'&response_type=code&redirect_uri=https://{asf_auth_host}/login')
 
         req = requests.Session()
         req.auth = (self.username, self.password)
-        response = req.get(login_url)
-
-        # Download data files and create symbolic link
+        req.get(login_url)
         response = req.get(url, stream=True)
-        total = int(response.headers.get('content-length', 0))
-        with open(file_path, 'wb') as file, \
-                tqdm(desc=os.path.basename(file_path), total=total, unit='iB', unit_scale=True,
-                     unit_divisor=1024, position=1) as bar:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    size = file.write(chunk)
-                    bar.update(size)
+        response.raise_for_status()
+        stream_response_to_file(response, file_path, position=pos or 1)
+
 
 class ESADownloader():
+    """Download one Sentinel-1 product from the Copernicus CDSE zipper."""
 
     def __init__(self, username, password):
         self.username = username
         self.password = password
 
     def __call__(self, download_data):
-
         [uuid, product_name, date, track, polarisation, direction, size, file_path, pos] = download_data
 
-        # Get token
-        r = requests.post("https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token",
-                          data={"client_id": "cdse-public", "username": self.username, "password": self.password,
-                                "grant_type": "password"})
-        token = r.json()[("access_token")]
+        r = requests.post(
+            'https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token',
+            data={'client_id': 'cdse-public', 'username': self.username,
+                  'password': self.password, 'grant_type': 'password'})
+        r.raise_for_status()
+        token = r.json()['access_token']
 
-        # Now download the file
-        url = f"https://zipper.dataspace.copernicus.eu/odata/v1/Products(" + uuid + ")/$value"
-        headers = {"Authorization": f"Bearer {token}"}
-
-        response = requests.get(url, headers=headers, stream=True)
-        total = int(response.headers.get('content-length', 0))
-        with open(file_path, 'wb') as file, \
-                tqdm(desc=os.path.basename(file_path), total=total, unit='iB', unit_scale=True,
-                     unit_divisor=1024, position=1) as bar:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    size = file.write(chunk)
-                    bar.update(size)
+        url = f'https://zipper.dataspace.copernicus.eu/odata/v1/Products({uuid})/$value'
+        response = requests.get(url, headers={'Authorization': f'Bearer {token}'}, stream=True)
+        response.raise_for_status()
+        stream_response_to_file(response, file_path, position=pos or 1)
 
 
-class DownloadSentinel(object):
+class DownloadSentinel(DownloadSar):
+
+    sensor_name = 'Sentinel-1'
 
     def __init__(self, start_date='', end_date='', start_dates='', end_dates='', date='', dates='', time_window='',
                  shape='', track='', polarisation='', n_processes=1, use_burst_id=False,
@@ -153,90 +130,30 @@ class DownloadSentinel(object):
         # track > the tracks we want to check (default all)
         # polarisation > which polarisation will be used. (default all)
 
-        # string is the field we enter as url
-        self.n_processes = n_processes
-        self.settings = UserSettings()
-        self.settings.load_settings()
-        self.sizes = []
-        self.products = []
-        self.polarisations = []
-        self.footprints = []
-        self.tracks = []
-        self.orbit_directions = []
-        self.ids = []
-        self.dates = []
+        super().__init__(
+            start_date=start_date, end_date=end_date, start_dates=start_dates, end_dates=end_dates,
+            date=date, dates=dates, time_window=time_window, shape=shape, track=track,
+            polarisation=polarisation, orbit_direction=orbit_direction, sensor_mode=sensor_mode,
+            product=product, max_num_products=max_num_products, n_processes=n_processes)
+
         self.use_burst_id = use_burst_id
-
-        if not isinstance(shape, Polygon):
-            shape_data = ReadWriteShapes()
-            shape_data(shape)
-            self.shape = shape_data.shape  # type:Polygon
-        else:
-            self.shape = shape
-
-        self.shape_string = ''
-        self.create_shape_str()
-
-        self.valid_files = []
-        self.invalid_files = []
-
-        if not instrument_name in ['1A', '1B', '']:
+        if instrument_name not in ['1A', '1B', '']:
             logging.error('Instrument name should either be 1A, 1B or left empty')
         self.instrument_name = instrument_name
-        self.sensor_mode = sensor_mode
-        self.product = product
-        if orbit_direction in ['a', 'A', 'ASC', 'Asc', 'ASCENDING', 'Ascending', 'ascending', 'asc']:
-            self.orbit_direction_ESA = 'ascending'
+        self.orbit = ''
+        self.data_collection = 'SENTINEL-1'
+        # ESA / ASF catalogue spellings derived from the shared normalized direction.
+        # CDSE expects uppercase ASCENDING/DESCENDING for orbitDirection.
+        if self.orbit_direction == 'ascending':
+            self.orbit_direction_ESA = 'ASCENDING'
             self.orbit_direction_ASF = 'ASC'
-        elif orbit_direction in ['D', 'd', 'DESC', 'desc', 'Desc', 'DESCENDING', 'Descending', 'descending']:
-            self.orbit_direction_ESA = 'descending'
+        elif self.orbit_direction == 'descending':
+            self.orbit_direction_ESA = 'DESCENDING'
             self.orbit_direction_ASF = 'DESC'
         else:
             self.orbit_direction_ESA = ''
             self.orbit_direction_ASF = ''
-        self.track = str(track)
-        self.orbit = ''
-        self.shape = shape
-        self.polarisation = polarisation
-
-        self.start_dates = []
-        self.end_dates = []
-
-        if isinstance(date, datetime.datetime):
-            dates = [date]
-        elif isinstance(dates, datetime.datetime):
-            dates = [dates]
-
-        # Create a list of search windows with start and end dates
-        if isinstance(dates, list):
-            for date in dates:
-                if not isinstance(date, datetime.datetime):
-                    raise TypeError('Input dates should be datetime objects.')
-
-            if isinstance(time_window, datetime.timedelta):
-                self.start_dates = [date - time_window for date in dates]
-                self.end_dates = [date + time_window for date in dates]
-            else:
-                self.start_dates = [date.replace(hour=0, minute=0, second=0, microsecond=0) for date in dates]
-                self.end_dates = [date + datetime.timedelta(days=1) for date in self.start_dates]
-
-        elif isinstance(start_date, datetime.datetime) and isinstance(end_date, datetime.datetime):
-            self.start_dates = [start_date]
-            self.end_dates = [end_date]
-        elif isinstance(start_dates, list) and isinstance(end_dates, list):
-            self.start_dates = start_dates
-            self.end_dates = end_dates
-            valid_dates = [isinstance(start_date, datetime.datetime) * isinstance(end_date, datetime.datetime) for
-                           start_date, end_date in zip(start_dates, end_dates)]
-            if np.sum(valid_dates) < len(valid_dates):
-                raise TypeError('Input dates should be datetime objects.')
-        else:
-            raise TypeError('You should define a start or end date or a list of dates to search for Sentinel-1 data! '
-                            'Dates should be datetime objects')
-
-        self.start_dates = np.array(self.start_dates)
-        self.end_dates = np.array(self.end_dates)
-        self.data_collection = 'SENTINEL-1'
+        # ESA OData $top expects a string
         self.max_num_products = str(max_num_products)
 
     def search_string_ESA(self,
@@ -266,7 +183,16 @@ class DownloadSentinel(object):
         q['date_start'] = f"ContentDate/Start gt {date_start_str}T00:00:00.000Z" if date_start_str else ""
         q['date_end'] = f"ContentDate/Start lt {date_end_str}T23:59:59.000Z" if date_end_str else ""
         q['orbit_direction'] = f"Attributes/OData.CSC.StringAttribute/any(att:att/Name eq 'orbitDirection' and att/OData.CSC.StringAttribute/Value eq '{self.orbit_direction_ESA}')" if self.orbit_direction_ESA else ""
-        q['product_type'] = f"Attributes/OData.CSC.StringAttribute/any(att:att/Name eq 'productType' and att/OData.CSC.StringAttribute/Value eq '{self.product}')" if self.product else ""
+        # CDSE productType values look like 'IW_SLC__1S'; allow short aliases such as 'SLC'
+        if self.product:
+            if '_' in self.product:
+                q['product_type'] = (
+                    "Attributes/OData.CSC.StringAttribute/any(att:att/Name eq 'productType' and "
+                    f"att/OData.CSC.StringAttribute/Value eq '{self.product}')")
+            else:
+                q['product_type'] = f"contains(Name,'{self.product}')"
+        else:
+            q['product_type'] = ""
         q['operational_mode'] = f"Attributes/OData.CSC.StringAttribute/any(att:att/Name eq 'operationalMode' and att/OData.CSC.StringAttribute/Value eq '{self.sensor_mode}')" if self.sensor_mode else ""
         q['satellite_platform_letter'] = f"Attributes/OData.CSC.StringAttribute/any(att:att/Name eq 'platformSerialIdentifier' and att/OData.CSC.StringAttribute/Value eq '{satellite_platform_letter}')" if satellite_platform_letter else ""
         q['relative_orbit_number'] = f"Attributes/OData.CSC.IntegerAttribute/any(att:att/Name eq 'relativeOrbitNumber' and att/OData.CSC.IntegerAttribute/Value eq {self.track})" if self.track else ""
@@ -290,21 +216,22 @@ class DownloadSentinel(object):
 
         return url_req
 
+    @staticmethod
+    def _esa_attribute_value(attributes, name, default=None):
+        for attribute in attributes or []:
+            if attribute.get('Name') == name:
+                return attribute.get('Value', default)
+        return default
+
     def sentinel_search_ESA(self):
         # All available sentinel-1 images are detected and printed on screen.
 
-        self.products = []
-        self.footprints = []
-        self.tracks = []
-        self.orbit_directions = []
-        self.ids = []
-        self.dates = []
-        self.polarisations = []
-        self.product_names = []
+        self.reset_search_results()
 
         for start_date, end_date in zip(self.start_dates, self.end_dates):
 
             Copernicus_string = self.search_string_ESA(start_date, end_date)
+            products = []
             # Finally we do the query to get the search result.
             # connect to server. Hopefully this works at once
             try:
@@ -322,13 +249,21 @@ class DownloadSentinel(object):
             self.products.extend(products)
 
             for product in products:
+                attributes = product.get('Attributes', [])
                 self.sizes.append(None)
-                self.polarisations.append(product['Attributes'][17]['Value'].replace('&', ''))
+                pol = self._esa_attribute_value(attributes, 'polarisationChannels', '')
+                self.polarisations.append(str(pol).replace('&', ''))
                 self.footprints.append(shapely.Polygon(product['GeoFootprint']['coordinates'][0]))
-                self.tracks.append(int(product['Attributes'][16]['Value']))
-                self.orbit_directions.append(product['Attributes'][8]['Value'])
+                track = self._esa_attribute_value(attributes, 'relativeOrbitNumber', None)
+                self.tracks.append(int(track) if track is not None else None)
+                direction = self._esa_attribute_value(attributes, 'orbitDirection', '')
+                self.orbit_directions.append(direction)
                 self.ids.append(product['Id'])
-                self.product_names.append(product['Name'])
+                # Strip .SAFE suffix for consistency with ASF product names
+                name = product['Name']
+                if name.endswith('.SAFE'):
+                    name = name[:-5]
+                self.product_names.append(name)
                 if product['ContentDate']['Start'].endswith('Z'):
                     self.dates.append(
                         datetime.datetime.strptime(product['ContentDate']['Start'], '%Y-%m-%dT%H:%M:%S.%fZ'))
@@ -342,14 +277,10 @@ class DownloadSentinel(object):
     def sentinel_download_ESA(self, database_folder='', username='', password=''):
         # Download the files which are found by the sentinel_available script.
 
-        if not username:
-            username = self.settings.settings['accounts']['Copernicus']['username']
-        if not password:
-            password = self.settings.settings['accounts']['Copernicus']['password']
+        if not username or not password:
+            username, password = self.get_account_credentials('Copernicus', username, password)
         if not database_folder:
-            radar_database = self.settings.settings['paths']['radar_database']
-            folder = self.settings.settings['path_names']['SAR']['Sentinel-1']
-            database_folder = os.path.join(radar_database, folder)
+            database_folder = self.get_radar_database_folder('Sentinel-1')
 
         if not self.products:
             raise FileNotFoundError('No images found!')
@@ -369,20 +300,7 @@ class DownloadSentinel(object):
                 download_dat.append([uuid, product_name, date, track, polarisation, direction, size, file_path, pos])
                 pos += 1
 
-        if len(download_dat) == 0:
-            logging.info('All images are already downloaded. Skipping download')
-            return
-
-        if self.n_processes > 1:
-            with get_context("spawn").Pool(processes=self.n_processes, maxtasksperchild=5) as pool:
-                # Process in blocks of 25
-                block_size = 25
-                for i in range(int(np.ceil(len(download_dat) / block_size))):
-                    last_dat = np.minimum((i + 1) * block_size, len(download_dat))
-                    pool.map(downloader, list(download_dat[i * block_size:last_dat]))
-        else:
-            for download_info in download_dat:
-                downloader(download_info)
+        run_parallel_downloads(downloader, download_dat, n_processes=self.n_processes)
 
     def search_string_ASF(self, start, end):
 
@@ -440,18 +358,9 @@ class DownloadSentinel(object):
     def sentinel_search_ASF(self, username='', password=''):
         # All available sentinel-1 images are detected and printed on screen.
 
-        if not username:
-            username = self.settings.settings['accounts']['EarthData']['username']
-        if not password:
-            password = self.settings.settings['accounts']['EarthData']['password']
-        self.products = []
-        self.footprints = []
-        self.tracks = []
-        self.orbit_directions = []
-        self.ids = []
-        self.dates = []
-        self.polarisations = []
-        self.product_names = []
+        if not username or not password:
+            username, password = self.get_account_credentials('EarthData', username, password)
+        self.reset_search_results()
 
         for start, end in zip(self.start_dates, self.end_dates):
 
@@ -494,14 +403,10 @@ class DownloadSentinel(object):
     def sentinel_download_ASF(self, database_folder='', username='', password=''):
         # Download data from ASF (Generally easier and much faster to download from this platform.)
 
-        if not username:
-            username = self.settings.settings['accounts']['EarthData']['username']
-        if not password:
-            password = self.settings.settings['accounts']['EarthData']['password']
+        if not username or not password:
+            username, password = self.get_account_credentials('EarthData', username, password)
         if not database_folder:
-            radar_database = self.settings.settings['paths']['radar_database']
-            folder = self.settings.settings['path_names']['SAR']['Sentinel-1']
-            database_folder = os.path.join(radar_database, folder)
+            database_folder = self.get_radar_database_folder('Sentinel-1')
 
         if not self.products:
             raise FileNotFoundError('No images found!')
@@ -520,171 +425,18 @@ class DownloadSentinel(object):
                 download_dat.append([product_name, date, track, polarisation, direction, size, file_path, pos])
                 pos += 1
 
-        if len(download_dat) == 0:
-            logging.info('All images are already downloaded. Skipping download')
-            return
-
-        download_dat = np.array(download_dat)
-
-        if self.n_processes > 1:
-            with get_context("spawn").Pool(processes=self.n_processes, maxtasksperchild=5) as pool:
-                # Process in blocks of 25
-                block_size = 25
-                for i in range(int(np.ceil(len(download_dat) / block_size))):
-                    last_dat = np.minimum((i + 1) * block_size, len(download_dat))
-                    pool.map(downloader, list(download_dat[i * block_size:last_dat]))
-        else:
-            for download_info in download_dat:
-                downloader(download_info)
-
-    def summarize_search_results(self, plot=True, plot_cartopy=True, buffer=3):
-        """
-        Plot the overlap between the different tracks and the area of interest and summarize the available images for
-        this search.
-
-        :param plot:
-        :param plot_cartopy:
-        :param buffer:
-        :return:
-        """
-
-        if len(self.dates) == 0:
-            logging.info('No images found to visualize')
-            return
-
-        # Sort by date and track
-        date_track = np.array([d.date().isoformat() + '_' + str(t) for d, t in zip(self.dates, self.tracks)])
-        unique, unique_ids = np.unique(date_track, return_index=True)
-
-        dates = np.array(self.dates)[unique_ids]
-        tracks = np.array(self.tracks)[unique_ids]
-        ids_list = []
-        direction = np.array(self.orbit_directions)[unique_ids]
-        polygons = []
-        coverage = []
-
-        AOI_area = self.shape.area
-
-        # Create polygon per date
-        for u_val in unique:
-            ids = np.ravel(np.argwhere(date_track == u_val))
-            ids_list.append(ids)
-            polygons.append(unary_union(np.array(self.footprints)[ids]))
-            coverage.append(polygons[-1].intersection(self.shape).area / AOI_area)
-
-        # Create polygon per track
-        polygons = np.array(polygons)
-        coverage = np.array(coverage)
-        unique_tracks, unique_ids = np.unique(tracks, return_index=True)
-        direction = direction[unique_ids]
-        track_polygon = []
-        average_coverages = []
-        image_nos = []
-
-        for track in unique_tracks:
-            ids = np.ravel(np.argwhere(tracks == track))
-            track_polygon.append(unary_union(polygons[ids]))
-            image_nos.append(len(ids))
-            average_coverages.append(np.mean(coverage[ids]))
-
-        bb_buffer = np.array(unary_union(track_polygon + [self.shape]).buffer(buffer).bounds)[np.array([0, 2, 1, 3])]
-
-        # Plot polygon for different tracks
-        for n, polygon in enumerate(track_polygon):
-            title = str(int(average_coverages[n] * 100)) + '% coverage for ' + direction[n].lower() + ' track ' + str(
-                unique_tracks[n])
-            if isinstance(polygon, Polygon):
-                polygons = [polygon]
-            else:
-                polygons = [pol for pol in polygon]
-
-            if plot_cartopy:
-                ax = plt.axes(projection=ccrs.PlateCarree())
-
-                ax.set_title(title)
-                ax.add_feature(cfeature.LAND, zorder=0, edgecolor='k')
-                ax.add_feature(cfeature.BORDERS, linestyle='-', alpha=.5)
-                ax.add_geometries(polygons, ccrs.PlateCarree(), facecolor='b', alpha=0.5)
-                ax.add_geometries([self.shape], ccrs.PlateCarree(), facecolor='r', alpha=0.5)
-
-                # Add the coordinates on the sides
-                ax.set_xticks(np.arange(-180, 181, 2), crs=ccrs.PlateCarree())
-                lon_formatter = cticker.LongitudeFormatter()
-                ax.xaxis.set_major_formatter(lon_formatter)
-
-                ax.set_yticks(np.arange(-90, 91, 2), crs=ccrs.PlateCarree())
-                lat_formatter = cticker.LatitudeFormatter()
-                ax.yaxis.set_major_formatter(lat_formatter)
-
-                ax.set_extent(list(bb_buffer), ccrs.PlateCarree())
-
-                plt.show()
-            elif plot:
-                ax = plt.axes()
-                shape_x, shape_y = self.shape.exterior.xy
-                for polygon in polygons:
-                    dat_x, dat_y = polygon.exterior.xy
-                    ax.fill(dat_x, dat_y, alpha=0.5, fc='blue', ec='none')
-                ax.fill(shape_x, shape_y, alpha=0.5, fc='r', ec='none')
-                ax.set_title(title)
-                ax.set_xlim([bb_buffer[0], bb_buffer[1]])
-                ax.set_ylim([bb_buffer[2], bb_buffer[3]])
-                plt.show()
-
-        # Finally print list available images with their coverage.
-        logging.info('Summary statistics for Sentinel-1 search:')
-        for track, average_coverage, image_no, direc in zip(unique_tracks, average_coverages, image_nos, direction):
-            logging.info('Stack for ' + direc.lower() + ' track ' + str(track).zfill(3) + ' contains ' + str(
-                image_no) + ' images with ' + str(int(average_coverage * 100)) + '% coverage of area of interest')
-
-        for track in unique_tracks:
-            logging.info('')
-            logging.info('Full list of images for track ' + str(track).zfill(3) + ':')
-
-            # Sort all images for this track
-            id_dates = np.ravel(np.argwhere(tracks == track))
-            sorted_ids = id_dates[np.ravel(np.argsort(dates[id_dates]))]
-            for id in sorted_ids:
-
-                logging.info(dates[id].isoformat() + ' with a coverage of ' + str(
-                    int(coverage[id] * 100)) + '% consists of SAR products:')
-                for id_image in ids_list[id]:
-                    logging.info(str('          ') + self.product_names[id_image])
+        run_parallel_downloads(downloader, download_dat, n_processes=self.n_processes)
 
     @staticmethod
     def find_database_folder(database_folder, product_name, date, track, polarisation, direction):
         # Find the destination folder in the database.
-
         data_type = product_name[4:16]
-        if direction == 'ASCENDING':
-            direction = 'asc'
-        elif direction == 'DESCENDING':
-            direction = 'dsc'
-
-        track_folder = os.path.join(database_folder, 's1_' + direction + '_t' + str(track).zfill(3))
-        if not os.path.exists(track_folder):
-            os.mkdir(track_folder)
-        type_folder = os.path.join(track_folder, data_type + '_' + polarisation)
-        if not os.path.exists(type_folder):
-            os.mkdir(type_folder)
-        date_folder = os.path.join(type_folder, date.strftime('%Y%m%d'))
-        if not os.path.exists(date_folder):
-            os.mkdir(date_folder)
-
-        file_dir = os.path.join(date_folder, product_name + '.zip')
-
-        return file_dir
-
-    def create_shape_str(self):
-        # This script converts .shp files to the right format. If multiple shapes are available the script
-        # will select the first one.
-
-        dat = self.shape.exterior.coords
-
-        if not isinstance(self.shape, Polygon):
-            raise TypeError('Shape type should be Polygon (no Point, MultiPolygon etc..)')
-
-        self.shape_string = '('
-        for p in dat:
-            self.shape_string = self.shape_string + str(p[0]) + ' ' + str(p[1]) + ','
-        self.shape_string = self.shape_string[:-1] + ')'
+        return DownloadSar.ensure_database_path(
+            database_folder=database_folder,
+            sensor_prefix='s1',
+            date=date,
+            track=track,
+            polarisation=polarisation,
+            direction=direction,
+            type_name=data_type,
+            product_name=product_name)

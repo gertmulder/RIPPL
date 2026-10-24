@@ -78,11 +78,11 @@ class TandemXDownloadTile(object):
 
         # credentials
         if not username:
-            self.username = settings.settings['accounts']['DLR'][tandem_x_type]['username']
+            self.username = settings.settings['accounts']['DLR']['username']
         else:
             self.username = username
         if not password:
-            self.password = settings.settings['accounts']['DLR'][tandem_x_type]['password']
+            self.password = settings.settings['accounts']['DLR']['password']
         else:
             self.password = password
 
@@ -242,11 +242,11 @@ class TandemXDownload:
 
         # credentials
         if not username:
-            self.username = settings.settings['accounts']['DLR'][tandem_x_type]['username']
+            self.username = settings.settings['accounts']['DLR']['username']
         else:
             self.username = username
         if not password:
-            self.password = settings.settings['accounts']['DLR'][tandem_x_type]['password']
+            self.password = settings.settings['accounts']['DLR']['password']
         else:
             self.password = password
 
